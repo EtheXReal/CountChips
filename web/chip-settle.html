@@ -1,0 +1,940 @@
+<title>筹码结算器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Noto+Serif+SC:wght@600;700&display=swap">
+<style>
+/* Layout: one ledger column laid on poker felt. Photo step, then the settlement (summary), then each player's chip rows (detail), then guide and house rules. */
+:root {
+  --bg: #edf2f0;
+  --surface: #ffffff;
+  --surface-2: #f4f7f6;
+  --ink: #142120;
+  --muted: #5a6b67;
+  --line: #d3ddda;
+  --felt: #0e5a51;
+  --felt-ink: #ffffff;
+  --felt-soft: #dcebe7;
+  --win: #0d7a5f;
+  --loss: #b8462a;
+  --warn-bg: #fff3d6;
+  --warn-ink: #6f4b00;
+  --ok-bg: #e0f2ea;
+  --ok-ink: #0b5843;
+  --ring: rgba(20, 33, 32, 0.22);
+  --focus: #1b7f73;
+  --font-display: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1514; --surface: #12201e; --surface-2: #0f1b19; --ink: #e3ece9; --muted: #93a6a2;
+    --line: #23403b; --felt: #3fb7a5; --felt-ink: #06201c; --felt-soft: #163632; --win: #4cc3a6;
+    --loss: #f0866a; --warn-bg: #3a2f12; --warn-ink: #f3cf7a; --ok-bg: #12352c; --ok-ink: #8fe0c4;
+    --ring: rgba(227, 236, 233, 0.3); --focus: #5fd0bf; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1514; --surface: #12201e; --surface-2: #0f1b19; --ink: #e3ece9; --muted: #93a6a2;
+  --line: #23403b; --felt: #3fb7a5; --felt-ink: #06201c; --felt-soft: #163632; --win: #4cc3a6;
+  --loss: #f0866a; --warn-bg: #3a2f12; --warn-ink: #f3cf7a; --ok-bg: #12352c; --ok-ink: #8fe0c4;
+  --ring: rgba(227, 236, 233, 0.3); --focus: #5fd0bf; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.page { max-width: 880px; margin: 0 auto; padding-inline: 16px; padding-block: 22px 48px; display: grid; gap: 18px; }
+h1, h2 { font-family: var(--font-display); font-weight: 700; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(26px, 6vw, 34px); letter-spacing: 0.04em; }
+h2 { font-size: 19px; letter-spacing: 0.02em; }
+p { margin: 0; }
+.top { display: grid; gap: 10px; }
+.lede { color: var(--muted); max-width: 40em; }
+.rules { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }
+.rule { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.sw {
+  --sw: #888; width: 18px; height: 18px; border-radius: 50%; flex: none;
+  background:
+    radial-gradient(circle at center, var(--sw) 0 50%, transparent 51%),
+    repeating-conic-gradient(from 12deg, var(--sw) 0deg 34deg, rgba(255, 255, 255, 0.92) 34deg 48deg);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.hint { font-size: 13px; color: var(--muted); }
+.btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn {
+  appearance: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+  border-radius: 999px; padding: 9px 16px; min-height: 44px; font: inherit; font-weight: 600;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn.primary { background: var(--felt); color: var(--felt-ink); border-color: var(--felt); }
+.btn.small { min-height: 34px; padding: 5px 12px; font-size: 13px; }
+.btn.is-off, .btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+.btn:focus-visible, input:focus-visible, summary:focus-visible, .btn:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.file-in { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.ai-note { font-size: 14px; color: var(--muted); }
+.ai-note.warn { color: var(--warn-ink); background: var(--warn-bg); border-radius: 10px; padding: 8px 12px; }
+.preview { display: block; width: 100%; max-width: 100%; border-radius: 12px; background: var(--surface-2); }
+.progress { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.progress li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.progress .what { font-weight: 600; }
+.progress .detail { color: var(--muted); font-size: 13px; }
+.state { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.state.busy { background: var(--felt-soft); color: var(--felt); border-color: transparent; animation: pulse 1.4s ease-in-out infinite; }
+.state.done { background: var(--ok-bg); color: var(--ok-ink); border-color: transparent; }
+.state.err { background: var(--warn-bg); color: var(--warn-ink); border-color: transparent; }
+@keyframes pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .state.busy { animation: none; } }
+.check { border-radius: 12px; padding: 10px 14px; font-size: 14px; display: grid; gap: 4px; }
+.check strong { font-weight: 700; }
+.check.ok { background: var(--ok-bg); color: var(--ok-ink); }
+.check.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.check.idle { background: var(--surface-2); color: var(--muted); }
+.check ul { margin: 2px 0 0; padding-left: 18px; }
+.res-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.res-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.res-row:last-child { border-bottom: 0; }
+.seat { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-num); font-weight: 600; font-size: 13px; background: var(--felt-soft); color: var(--felt); flex: none; }
+.res-name { font-weight: 700; font-size: 16px; }
+.res-sub { font-size: 12px; color: var(--muted); }
+.res-yuan { font-family: var(--font-num); font-weight: 600; font-size: 22px; font-variant-numeric: tabular-nums; text-align: right; line-height: 1.2; }
+.res-yuan small { display: block; font-family: var(--font-body); font-size: 11px; font-weight: 500; color: var(--muted); }
+.win { color: var(--win); }
+.loss { color: var(--loss); }
+.even { color: var(--muted); }
+.transfers { display: grid; gap: 8px; }
+.transfers h3 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
+.tr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tr-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+.tr-list .arrow { color: var(--muted); }
+.tr-list .amt { margin-left: auto; font-family: var(--font-num); font-weight: 600; font-variant-numeric: tabular-nums; }
+.copy-box { width: 100%; min-height: 150px; font: 13px/1.5 var(--font-num); background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.game-label { font-size: 13px; color: var(--muted); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--felt-soft); color: var(--felt); margin-left: 6px; vertical-align: 1px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 8px; background: var(--surface); min-width: 0; align-content: start; }
+.card-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.card-name { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.card-net { font-family: var(--font-num); font-weight: 600; font-size: 16px; font-variant-numeric: tabular-nums; text-align: right; }
+.rows { display: grid; gap: 6px; }
+.row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 70px; gap: 8px; align-items: center; }
+.row-label { font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+.row-label .num { color: var(--muted); font-size: 12px; }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.stepper button { width: 34px; height: 34px; border: 0; background: var(--surface-2); color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer; font-family: var(--font-num); }
+.stepper button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.stepper input { width: 46px; height: 34px; border: 0; text-align: center; font-family: var(--font-num); font-size: 15px; background: var(--surface); color: var(--ink); -moz-appearance: textfield; appearance: textfield; }
+.stepper input::-webkit-inner-spin-button, .stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.sub { text-align: right; font-family: var(--font-num); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill { font-size: 11px; padding: 0 6px; border-radius: 999px; line-height: 18px; }
+.pill.low { background: var(--warn-bg); color: var(--warn-ink); }
+.pill.medium { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.card-note { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.card-foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.card-total { font-size: 12px; color: var(--muted); }
+details.panel > summary { font-family: var(--font-display); font-weight: 700; font-size: 18px; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary::after { content: "展开"; font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--muted); }
+details.panel[open] > summary::after { content: "收起"; }
+.guide { margin: 0; padding-left: 20px; display: grid; gap: 8px; max-width: 42em; }
+.set-block { display: grid; gap: 8px; }
+.set-block h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.set-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.set-row input[type="text"], .set-row input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; min-height: 36px; min-width: 0;
+}
+.set-row .w-name { width: 7.5em; }
+.set-row .w-num { width: 6.5em; font-family: var(--font-num); }
+.set-row .w-hint { width: 7em; }
+.set-row input[type="color"] { width: 38px; height: 36px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.set-row label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.foot { font-size: 12px; color: var(--muted); text-align: center; }
+@media (max-width: 420px) {
+  .panel { padding: 14px; }
+  .row { grid-template-columns: 18px minmax(0, 1fr) auto 58px; gap: 6px; }
+  .res-yuan { font-size: 20px; }
+}
+</style>
+
+<main class="page">
+  <header class="top">
+    <h1>筹码结算器</h1>
+    <p class="lede">拍一张全桌照片：自动按座位数筹码，核对总账，算出每人输赢和谁转给谁。数错的地方可以直接加减。</p>
+    <div class="rules" id="rules"></div>
+  </header>
+
+  <section class="panel" aria-labelledby="h-photo">
+    <div class="panel-head">
+      <h2 id="h-photo">拍照识别</h2>
+      <span class="hint">手机举到桌子正上方，四周座位号都拍进去</span>
+    </div>
+    <div class="btns">
+      <label class="btn primary is-off" id="lbl-cam">拍全桌照片<input class="file-in" type="file" id="in-cam" accept="image/*" capture="environment" disabled></label>
+      <label class="btn is-off" id="lbl-pick">从相册选<input class="file-in" type="file" id="in-pick" accept="image/*" disabled></label>
+      <button class="btn" id="btn-stop" type="button" hidden>停止</button>
+      <button class="btn" id="btn-retry" type="button" hidden>重新识别这张</button>
+    </div>
+    <p class="ai-note" id="ai-note">正在连接 Claude…</p>
+    <canvas class="preview" id="preview" hidden></canvas>
+    <ol class="progress" id="progress"></ol>
+  </section>
+
+  <section class="panel" aria-labelledby="h-result">
+    <div class="panel-head">
+      <h2 id="h-result">结算</h2>
+      <span class="game-label" id="game-label"></span>
+    </div>
+    <div class="check idle" id="check" role="status"></div>
+    <ul class="res-list" id="results"></ul>
+    <div class="transfers" id="transfers"></div>
+    <div class="btns">
+      <button class="btn small" id="btn-copy" type="button">复制结算结果</button>
+    </div>
+    <textarea class="copy-box" id="copy-box" hidden readonly aria-label="结算文字"></textarea>
+  </section>
+
+  <section class="panel" aria-labelledby="h-cards">
+    <div class="bar">
+      <h2 id="h-cards">各人筹码</h2>
+      <button class="btn small" id="btn-new" type="button">新一局（清零）</button>
+    </div>
+    <p class="hint">识别后先扫一眼标了“把握低”的格子，数错了就点 − / + 或直接改数字。哪个人整体不对，点他卡片上的“近拍此人”。</p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <details class="panel" id="d-guide">
+    <summary>拍照要领</summary>
+    <ol class="guide">
+      <li>每人把筹码按颜色分开，各摊成一排，每枚至少露出一小截边（大约四分之一），不要整摞叠着。</li>
+      <li>红色借款筹码单独完全摊开，一枚都不要压住。它一枚就是一份借款，最怕数错。</li>
+      <li>同一种颜色太多（比如三十枚以上），摊成两三排，别挤成一条。挤得越紧越难数。</li>
+      <li>手机举到桌子正上方拍，四周座位号都要入镜；光线均匀，不开闪光，别让手、杯子挡住筹码。</li>
+      <li>结果里标了“把握低”的人，点他卡片上的“近拍此人”，对着他面前的筹码近拍一张，会重新数他那份。</li>
+      <li>最后看“结算”里的总账：非红筹码合计应该正好等于红色枚数乘每份借款。不平就按提示去查那一种颜色。</li>
+    </ol>
+  </details>
+
+  <details class="panel" id="d-settings">
+    <summary>玩家和本桌规则</summary>
+    <div class="set-block">
+      <h3>玩家（名字 · 座位号）</h3>
+      <div id="set-players" class="set-block"></div>
+      <div><button class="btn small" id="btn-add-player" type="button">添加玩家</button></div>
+    </div>
+    <div class="set-block">
+      <h3>筹码颜色和面值</h3>
+      <p class="hint">“识别用英文”是告诉 Claude 这种颜色叫什么，比如 green。</p>
+      <div id="set-chips" class="set-block"></div>
+      <div><button class="btn small" id="btn-add-chip" type="button">添加颜色</button></div>
+    </div>
+    <div class="set-block">
+      <h3>借款（红色筹码）</h3>
+      <div class="set-row">
+        <label>每枚红色 = 借<input class="w-num" type="number" id="set-loan-unit" min="1" step="1" inputmode="numeric">筹码</label>
+        <label>= <input class="w-num" type="number" id="set-loan-yuan" min="0" step="0.01" inputmode="decimal">元</label>
+      </div>
+    </div>
+  </details>
+
+  <p class="foot">数量和设置只存在这台设备的浏览器里。拍照识别会用到你自己的 Claude 用量。</p>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- data ----------
+  const DEFAULTS = {
+    players: [
+      { id: 'p5', name: '我', seat: 5 },
+      { id: 'p6', name: '妈妈', seat: 6 },
+      { id: 'p10', name: '姥爷', seat: 10 },
+      { id: 'p1', name: '姥姥', seat: 1 },
+      { id: 'p3', name: '弟弟', seat: 3 },
+    ],
+    chips: [
+      { key: 'yellow', label: '黄', value: 1000, hint: 'yellow', color: '#f0c02e' },
+      { key: 'purple', label: '紫', value: 500, hint: 'purple', color: '#7a52d4' },
+      { key: 'black', label: '黑', value: 100, hint: 'black', color: '#2c2b2f' },
+      { key: 'blue', label: '蓝', value: 10, hint: 'blue', color: '#3a85d6' },
+    ],
+    loanUnit: 2000,
+    loanYuan: 20,
+    loanHint: 'red',
+    loanColor: '#dd3d48',
+  };
+  const EXAMPLE = {
+    label: '10月5日那局（照片核对结果）',
+    example: true,
+    counts: {
+      p5: { yellow: 11, purple: 10, black: 16, blue: 3, red: 0 },
+      p6: { yellow: 0, purple: 4, black: 10, blue: 34, red: 0 },
+      p10: { yellow: 1, purple: 2, black: 6, blue: 44, red: 0 },
+      p1: { yellow: 1, purple: 1, black: 3, blue: 8, red: 8 },
+      p3: { yellow: 0, purple: 0, black: 0, blue: 11, red: 5 },
+    },
+    notes: {
+      p10: { blue: { conf: 'low', note: '两排太密，按总账推定' } },
+      p1: { red: { conf: 'medium', note: '红叠红难分，按总账推定' } },
+    },
+    seatNote: {},
+  };
+  const LS_KEY = 'chip-settle-v1';
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+
+  let S = clone(DEFAULTS);
+  let G = clone(EXAMPLE);
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (saved && saved.settings && Array.isArray(saved.settings.players) && saved.game && saved.game.counts) {
+      S = Object.assign(clone(DEFAULTS), saved.settings);
+      G = Object.assign({ notes: {}, seatNote: {} }, saved.game);
+    }
+  } catch (e) { /* storage unavailable: run on defaults */ }
+  let saveTimer = 0;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: S, game: G })); } catch (e) { /* ignore */ }
+    }, 150);
+  }
+
+  // ---------- helpers ----------
+  const $ = (s, r = document) => r.querySelector(s);
+  function el(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === 'class') e.className = v;
+      else if (k === 'text') e.textContent = v;
+      else if (k === 'style') e.setAttribute('style', v);
+      else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? '' : String(v));
+    }
+    for (const kid of kids) if (kid != null && kid !== false) e.append(kid);
+    return e;
+  }
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const allKeys = () => [...S.chips.map((c) => c.key), 'red'];
+  const cnt = (pid, key) => Math.max(0, Math.round(Number(G.counts?.[pid]?.[key]) || 0));
+  const fmtInt = (n) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US');
+  const fmtSigned = (n) => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n).toLocaleString('en-US');
+  const fmtYuan = (cents) => (cents > 0 ? '+' : cents < 0 ? '−' : '') + (Math.abs(cents) / 100).toFixed(2);
+  const plain = (cents) => (Math.abs(cents) / 100).toFixed(2);
+  const playerById = (id) => S.players.find((p) => p.id === id);
+  const chipName = (c) => `${c.label} ${c.value}`;
+  function today() { const d = new Date(); return `${d.getMonth() + 1}月${d.getDate()}日`; }
+
+  // ---------- money ----------
+  function calc() {
+    const rows = S.players.map((p) => {
+      const value = S.chips.reduce((a, c) => a + cnt(p.id, c.key) * (Number(c.value) || 0), 0);
+      const reds = cnt(p.id, 'red');
+      const net = value - reds * S.loanUnit;
+      const cents = Math.round((net * S.loanYuan * 100) / S.loanUnit);
+      return { p, value, reds, net, cents };
+    });
+    const nonRed = rows.reduce((a, r) => a + r.value, 0);
+    const reds = rows.reduce((a, r) => a + r.reds, 0);
+    return { rows, nonRed, reds, residual: nonRed - reds * S.loanUnit };
+  }
+  function transfers(rows) {
+    const cred = rows.filter((r) => r.cents > 0).map((r) => ({ p: r.p, c: r.cents })).sort((a, b) => b.c - a.c);
+    const debt = rows.filter((r) => r.cents < 0).map((r) => ({ p: r.p, c: -r.cents })).sort((a, b) => b.c - a.c);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < debt.length && j < cred.length) {
+      const amt = Math.min(debt[i].c, cred[j].c);
+      if (amt > 0) out.push({ from: debt[i].p, to: cred[j].p, cents: amt });
+      debt[i].c -= amt; cred[j].c -= amt;
+      if (debt[i].c === 0) i++;
+      if (cred[j].c === 0) j++;
+    }
+    return out;
+  }
+  function residualHints(R) {
+    const hints = [];
+    if (!R) return hints;
+    for (const c of S.chips) {
+      const v = Number(c.value) || 0;
+      if (v > 0 && R % v === 0) {
+        const n = Math.abs(R) / v;
+        if (n >= 1 && n <= 3) hints.push(`有人的${chipName(c)} ${R > 0 ? '多数' : '少数'}了 ${n} 枚`);
+      }
+    }
+    if (R % S.loanUnit === 0) {
+      const n = Math.abs(R) / S.loanUnit;
+      if (n >= 1 && n <= 3) hints.push(`红色${R > 0 ? '少数' : '多数'}了 ${n} 枚`);
+    }
+    return hints;
+  }
+  function weakCells() {
+    const out = [];
+    for (const p of S.players) {
+      const notes = G.notes?.[p.id] || {};
+      for (const key of allKeys()) {
+        const n = notes[key];
+        if (n && (n.conf === 'low' || n.conf === 'medium')) {
+          const c = S.chips.find((x) => x.key === key);
+          out.push(`${p.name} ${c ? c.label : '红'}（把握${n.conf === 'low' ? '低' : '中'}）`);
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------- render: rules ----------
+  function renderRules() {
+    const box = $('#rules');
+    box.replaceChildren();
+    for (const c of S.chips) {
+      box.append(el('span', { class: 'rule' }, el('span', { class: 'sw', style: `--sw:${c.color}` }), `${c.label} `, el('span', { class: 'num', text: String(c.value) })));
+    }
+    box.append(el('span', { class: 'rule' }, el('span', { class: 'sw', style: `--sw:${S.loanColor}` }),
+      '红 = 借 ', el('span', { class: 'num', text: String(S.loanUnit) }), `（${S.loanYuan} 元）`));
+    const per = S.loanYuan > 0 ? S.loanUnit / S.loanYuan : 0;
+    if (per) box.append(el('span', { class: 'rule' }, el('span', { class: 'num', text: String(+per.toFixed(2)) }), ' 筹码 = 1 元'));
+  }
+
+  // ---------- render: cards ----------
+  function chipRow(p, key) {
+    const c = S.chips.find((x) => x.key === key);
+    const isRed = key === 'red';
+    const color = isRed ? S.loanColor : c.color;
+    const label = el('span', { class: 'row-label' }, isRed ? '红 借款' : c.label, el('span', { class: 'num', text: isRed ? `−${S.loanUnit}` : String(c.value) }));
+    const note = G.notes?.[p.id]?.[key];
+    if (note && (note.conf === 'low' || note.conf === 'medium')) {
+      label.append(el('span', { class: `pill ${note.conf}`, title: note.note || '', text: note.conf === 'low' ? '把握低' : '把握中' }));
+    }
+    const input = el('input', { type: 'number', min: '0', max: '999', step: '1', inputmode: 'numeric', id: `n-${p.id}-${key}`, 'aria-label': `${p.name} ${isRed ? '红色' : c.label} 枚数`, value: String(cnt(p.id, key)) });
+    input.addEventListener('input', () => { setCount(p.id, key, input.value, false); });
+    input.addEventListener('change', () => { setCount(p.id, key, input.value, true); });
+    const minus = el('button', { type: 'button', 'aria-label': `${p.name} ${isRed ? '红色' : c.label} 减一`, text: '−', onclick: () => setCount(p.id, key, cnt(p.id, key) - 1, true) });
+    const plus = el('button', { type: 'button', 'aria-label': `${p.name} ${isRed ? '红色' : c.label} 加一`, text: '+', onclick: () => setCount(p.id, key, cnt(p.id, key) + 1, true) });
+    const sub = el('span', { class: 'sub', 'data-sub': `${p.id}|${key}` });
+    const row = el('div', { class: 'row' }, el('span', { class: 'sw', style: `--sw:${color}` }), label, el('span', { class: 'stepper' }, minus, input, plus), sub);
+    if (note && note.note) row.title = note.note;
+    return row;
+  }
+  function renderCards() {
+    const box = $('#cards');
+    box.replaceChildren();
+    for (const p of S.players) {
+      const fileIn = el('input', { class: 'file-in', type: 'file', accept: 'image/*', capture: 'environment', id: `retake-${p.id}` });
+      fileIn.disabled = !AI.ready;
+      fileIn.addEventListener('change', () => { const f = fileIn.files && fileIn.files[0]; fileIn.value = ''; if (f) runRetake(f, p); });
+      const retake = el('label', { class: `btn small${AI.ready ? '' : ' is-off'}`, 'data-retake': p.id }, '近拍此人', fileIn);
+      const noteText = G.seatNote?.[p.id] || '';
+      const card = el('article', { class: 'card', 'data-card': p.id },
+        el('div', { class: 'card-head' },
+          el('span', { class: 'seat', text: String(p.seat), title: `${p.seat}号位` }),
+          el('span', { class: 'card-name', text: p.name }),
+          el('span', { class: 'card-net', 'data-net': p.id })),
+        el('div', { class: 'rows' }, ...allKeys().map((k) => chipRow(p, k))),
+        noteText ? el('p', { class: 'card-note', text: noteText }) : null,
+        el('div', { class: 'card-foot' }, el('span', { class: 'card-total', 'data-total': p.id }), retake));
+      box.append(card);
+    }
+    fillNumbers();
+  }
+  function fillNumbers() {
+    const r = calc();
+    for (const row of r.rows) {
+      const p = row.p;
+      for (const key of allKeys()) {
+        const sub = document.querySelector(`[data-sub="${p.id}|${key}"]`);
+        if (!sub) continue;
+        const n = cnt(p.id, key);
+        if (key === 'red') sub.textContent = n ? fmtInt(-n * S.loanUnit) : '0';
+        else { const c = S.chips.find((x) => x.key === key); sub.textContent = fmtInt(n * (Number(c.value) || 0)); }
+      }
+      const net = document.querySelector(`[data-net="${p.id}"]`);
+      if (net) { net.textContent = fmtYuan(row.cents) + ' 元'; net.className = 'card-net ' + (row.cents > 0 ? 'win' : row.cents < 0 ? 'loss' : 'even'); }
+      const tot = document.querySelector(`[data-total="${p.id}"]`);
+      if (tot) tot.textContent = `筹码 ${fmtInt(row.value)} · 借 ${fmtInt(row.reds * S.loanUnit)}`;
+    }
+    renderResults(r);
+  }
+  function setCount(pid, key, v, normalize) {
+    const n = clamp(Math.round(Number(v) || 0), 0, 999);
+    (G.counts[pid] ||= {})[key] = n;
+    if (G.example) { G.example = false; G.label = G.label.replace('（照片核对结果）', '（已改动）'); }
+    if (G.notes?.[pid]?.[key]) delete G.notes[pid][key];
+    if (normalize) {
+      const inp = document.getElementById(`n-${pid}-${key}`);
+      if (inp && inp.value !== String(n)) inp.value = String(n);
+      const pill = inp && inp.closest('.row') && inp.closest('.row').querySelector('.pill');
+      if (pill) pill.remove();
+    }
+    fillNumbers();
+    save();
+  }
+
+  // ---------- render: results ----------
+  function renderResults(r) {
+    r = r || calc();
+    $('#game-label').replaceChildren(document.createTextNode(G.label || ''), G.example ? el('span', { class: 'tag', text: '示例' }) : '');
+    const check = $('#check');
+    check.replaceChildren();
+    const hasData = r.nonRed > 0 || r.reds > 0;
+    if (!hasData) {
+      check.className = 'check idle';
+      check.append(el('span', { text: '还没有数量。拍一张照片，或者在下面直接填。' }));
+    } else if (r.residual === 0) {
+      check.className = 'check ok';
+      check.append(el('span', {}, el('strong', { text: '账平了。' }), ` 非红筹码合计 ${fmtInt(r.nonRed)} = 红色 ${r.reds} 枚 × ${S.loanUnit}，大家输赢加起来正好是 0。`));
+    } else {
+      check.className = 'check warn';
+      const more = r.residual > 0;
+      check.append(el('span', {}, el('strong', { text: '账不平。' }),
+        ` 非红筹码合计 ${fmtInt(r.nonRed)}，红色 ${r.reds} 枚应该对应 ${fmtInt(r.reds * S.loanUnit)}，${more ? '多出' : '少了'} ${fmtInt(Math.abs(r.residual))}。说明有数量数错了（或者有人的筹码没在桌上）。`));
+      const tips = residualHints(r.residual);
+      const weak = weakCells();
+      const items = [];
+      if (tips.length) items.push(`最可能：${tips.join('；或')}`);
+      if (weak.length) items.push(`先看这些把握不高的：${weak.join('、')}`);
+      if (items.length) check.append(el('ul', {}, ...items.map((t) => el('li', { text: t }))));
+    }
+
+    const list = $('#results');
+    list.replaceChildren();
+    const sorted = [...r.rows].sort((a, b) => b.cents - a.cents);
+    for (const row of sorted) {
+      const cls = row.cents > 0 ? 'win' : row.cents < 0 ? 'loss' : 'even';
+      const word = row.cents > 0 ? '赢' : row.cents < 0 ? '输' : '平';
+      list.append(el('li', { class: 'res-row' },
+        el('span', { class: 'seat', text: String(row.p.seat) }),
+        el('span', {}, el('span', { class: 'res-name', text: row.p.name }),
+          el('span', { class: 'res-sub', text: ` 筹码 ${fmtInt(row.value)}，借 ${row.reds} 份 → ${fmtSigned(row.net)}` })),
+        el('span', { class: `res-yuan ${cls}` }, `${fmtYuan(row.cents)}`, el('small', { text: `${word}（元）` }))));
+    }
+
+    const tr = $('#transfers');
+    tr.replaceChildren();
+    if (hasData && r.residual === 0) {
+      const t = transfers(r.rows);
+      if (t.length) {
+        tr.append(el('h3', { text: `怎么转账（${t.length} 笔就清）` }),
+          el('ul', { class: 'tr-list' }, ...t.map((x) => el('li', {},
+            el('strong', { text: x.from.name }), el('span', { class: 'arrow', text: '→' }), el('strong', { text: x.to.name }),
+            el('span', { class: 'amt', text: `${plain(x.cents)} 元` })))));
+      }
+    } else if (hasData) {
+      tr.append(el('p', { class: 'hint', text: '账对平以后这里会给出转账方案。' }));
+    }
+    $('#copy-box').hidden = true;
+  }
+  function resultText() {
+    const r = calc();
+    const lines = [`牌局结算 · ${G.label || today()}`];
+    for (const row of [...r.rows].sort((a, b) => b.cents - a.cents)) {
+      lines.push(`${row.p.name}（${row.p.seat}号）${fmtYuan(row.cents)} 元`);
+    }
+    if (r.residual === 0 && (r.nonRed || r.reds)) {
+      const t = transfers(r.rows);
+      if (t.length) lines.push('转账：' + t.map((x) => `${x.from.name}→${x.to.name} ${plain(x.cents)}`).join('；'));
+    } else if (r.nonRed || r.reds) {
+      lines.push(`（账没对平：差 ${fmtSigned(r.residual)} 筹码）`);
+    }
+    return lines.join('\n');
+  }
+
+  // ---------- render: settings ----------
+  function renderSettings() {
+    const pBox = $('#set-players');
+    pBox.replaceChildren();
+    for (const p of S.players) {
+      const name = el('input', { type: 'text', class: 'w-name', value: p.name, id: `sp-name-${p.id}`, 'aria-label': '名字', maxlength: '12' });
+      name.addEventListener('change', () => { p.name = name.value.trim() || p.name; afterSettings(); });
+      const seat = el('input', { type: 'number', class: 'w-num', value: String(p.seat), min: '1', max: '20', id: `sp-seat-${p.id}`, 'aria-label': '座位号', inputmode: 'numeric' });
+      seat.addEventListener('change', () => { const v = Math.round(Number(seat.value)); if (v > 0) p.seat = v; afterSettings(); });
+      const rm = el('button', { type: 'button', class: 'btn small', text: '移除', onclick: () => { S.players = S.players.filter((x) => x.id !== p.id); afterSettings(); } });
+      pBox.append(el('div', { class: 'set-row' }, name, el('label', {}, '座位', seat), rm));
+    }
+    const cBox = $('#set-chips');
+    cBox.replaceChildren();
+    for (const c of S.chips) {
+      const label = el('input', { type: 'text', class: 'w-num', value: c.label, id: `sc-label-${c.key}`, 'aria-label': '颜色名', maxlength: '4' });
+      label.addEventListener('change', () => { c.label = label.value.trim() || c.label; afterSettings(); });
+      const value = el('input', { type: 'number', class: 'w-num', value: String(c.value), min: '1', step: '1', id: `sc-value-${c.key}`, 'aria-label': '面值', inputmode: 'numeric' });
+      value.addEventListener('change', () => { const v = Math.round(Number(value.value)); if (v > 0) c.value = v; afterSettings(); });
+      const hint = el('input', { type: 'text', class: 'w-hint', value: c.hint, id: `sc-hint-${c.key}`, 'aria-label': '识别用英文颜色名', maxlength: '20' });
+      hint.addEventListener('change', () => { c.hint = hint.value.trim().toLowerCase() || c.hint; afterSettings(); });
+      const color = el('input', { type: 'color', value: c.color, id: `sc-color-${c.key}`, 'aria-label': '色块' });
+      color.addEventListener('change', () => { c.color = color.value; afterSettings(); });
+      const rm = el('button', { type: 'button', class: 'btn small', text: '移除', onclick: () => { S.chips = S.chips.filter((x) => x.key !== c.key); afterSettings(); } });
+      cBox.append(el('div', { class: 'set-row' }, color, label, el('label', {}, '面值', value), el('label', {}, '识别用英文', hint), rm));
+    }
+    $('#set-loan-unit').value = String(S.loanUnit);
+    $('#set-loan-yuan').value = String(S.loanYuan);
+  }
+  function afterSettings() { save(); renderRules(); renderSettings(); renderCards(); }
+  $('#set-loan-unit').addEventListener('change', (e) => { const v = Math.round(Number(e.target.value)); if (v > 0) S.loanUnit = v; afterSettings(); });
+  $('#set-loan-yuan').addEventListener('change', (e) => { const v = Number(e.target.value); if (v >= 0) S.loanYuan = v; afterSettings(); });
+  $('#btn-add-player').addEventListener('click', () => {
+    const used = new Set(S.players.map((p) => p.seat));
+    let seat = 1; while (used.has(seat) && seat < 20) seat++;
+    S.players.push({ id: 'p' + Date.now().toString(36), name: `玩家${S.players.length + 1}`, seat });
+    afterSettings();
+  });
+  $('#btn-add-chip').addEventListener('click', () => {
+    S.chips.push({ key: 'c' + Date.now().toString(36), label: '绿', value: 25, hint: 'green', color: '#2f9e5b' });
+    afterSettings();
+  });
+
+  // ---------- new game / copy ----------
+  let clearArmed = 0;
+  $('#btn-new').addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    if (Date.now() - clearArmed < 4000) {
+      clearArmed = 0; btn.textContent = '新一局（清零）';
+      G = { label: `${today()} 新一局`, example: false, counts: {}, notes: {}, seatNote: {} };
+      save(); renderCards();
+    } else {
+      clearArmed = Date.now(); btn.textContent = '再点一次，确认清零';
+      setTimeout(() => { if (clearArmed && Date.now() - clearArmed >= 3900) { clearArmed = 0; btn.textContent = '新一局（清零）'; } }, 4000);
+    }
+  });
+  $('#btn-copy').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; const text = resultText();
+    const done = (msg) => { btn.textContent = msg; setTimeout(() => { btn.textContent = '复制结算结果'; }, 1800); };
+    try { await navigator.clipboard.writeText(text); done('已复制'); }
+    catch (err) { const box = $('#copy-box'); box.hidden = false; box.value = text; box.focus(); box.select(); done('已选中，长按复制'); }
+  });
+
+  // ---------- AI ----------
+  const AI = { fn: null, ready: false, ctl: null, bmp: null, file: null, view: [], busy: false };
+  const ERR = {
+    not_granted: '没有允许本页使用 Claude。可以在页面的权限设置里打开，或者直接在下面手动填数量。',
+    sampling_disabled: '这个账号现在不能在页面里使用 Claude，请手动填数量。',
+    capability_disabled: '这个页面现在不能使用 Claude，请手动填数量。',
+    not_declared: '这个页面现在不能使用 Claude，请手动填数量。',
+    capability_removed: '这个 Claude 应用版本太旧，更新后再试，或手动填数量。',
+    images_unavailable: '这台设备不能把照片发给 Claude，请手动填数量。',
+    rate_limited: '用得太频繁或用量到上限了，过一会儿再点“重新识别”。',
+    session_expired: '登录过期了，重新登录 Claude 后再试。',
+    image_rejected: '这张照片处理不了，换一张（JPG 或 PNG）。',
+    refused: 'Claude 没有处理这张照片，换一张再试。',
+    invalid_json: '识别结果的格式不对，点“重新识别”再试一次。',
+    empty_completion: '没得到结果，换个角度拍一张再试。',
+    cancelled: '已停止。',
+  };
+  const errText = (e) => ERR[e && e.code] || '网络或服务出错了，点“重新识别”再试一次。';
+  const FATAL = new Set(['not_granted', 'sampling_disabled', 'capability_disabled', 'not_declared', 'capability_removed', 'images_unavailable']);
+
+  function setAiNote(text, warn) { const n = $('#ai-note'); n.textContent = text; n.className = 'ai-note' + (warn ? ' warn' : ''); }
+  function setPhotoEnabled(on) {
+    for (const id of ['in-cam', 'in-pick']) { const i = document.getElementById(id); i.disabled = !on; i.parentElement.classList.toggle('is-off', !on); }
+    document.querySelectorAll('[data-retake]').forEach((lab) => { lab.classList.toggle('is-off', !on); const i = lab.querySelector('input'); if (i) i.disabled = !on; });
+  }
+  (async () => {
+    let fn = null;
+    try { fn = window.claude && window.claude.use ? await window.claude.use('sample') : null; } catch (e) { fn = null; }
+    let caps = null;
+    if (fn) { try { caps = await fn.limits(); } catch (e) { caps = null; } }
+    if (fn && caps && caps.images) {
+      AI.fn = fn; AI.ready = true; setPhotoEnabled(true);
+      setAiNote('拍好后会先找每个人的筹码位置，再把每个人那一块放大单独数，大约一两分钟。第一次用会问你是否允许本页使用 Claude。');
+    } else {
+      AI.ready = false; setPhotoEnabled(false);
+      setAiNote('在这里打不开拍照识别（需要在 Claude 应用或 claude.ai 里打开本页）。下面可以直接手动填数量，结算照样算。', true);
+    }
+  })();
+
+  async function loadBitmap(file) {
+    if ('createImageBitmap' in window) {
+      try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { /* fall through */ }
+      try { return await createImageBitmap(file); } catch (e) { /* fall through */ }
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return img;
+  }
+  const iw = (b) => b.naturalWidth || b.width;
+  const ih = (b) => b.naturalHeight || b.height;
+  const toBlob = (cv, q) => new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej({ code: 'image_rejected' })), 'image/jpeg', q));
+
+  async function makeOverview(bmp) {
+    const w0 = iw(bmp), h0 = ih(bmp);
+    const s = Math.min(1, Math.sqrt(1.1e6 / (w0 * h0)));
+    const w = Math.round(w0 * s), h = Math.round(h0 * s);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const line = (x0, y0, x1, y1) => { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };
+    for (let p = 5; p < 100; p += 5) {
+      const major = p % 10 === 0;
+      const x = Math.round((w * p) / 100) + 0.5, y = Math.round((h * p) / 100) + 0.5;
+      ctx.lineWidth = major ? 2 : 1; ctx.strokeStyle = major ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.18)';
+      line(x, 0, x, h); line(0, y, w, y);
+      ctx.lineWidth = 1; ctx.strokeStyle = major ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.32)';
+      line(x, 0, x, h); line(0, y, w, y);
+    }
+    const fs = Math.max(12, Math.round(Math.min(w, h) * 0.024));
+    ctx.font = `600 ${fs}px sans-serif`; ctx.textBaseline = 'top';
+    const tag = (t, x, y) => { const m = ctx.measureText(t).width; ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(x, y, m + 8, fs + 6); ctx.fillStyle = '#fff'; ctx.fillText(t, x + 4, y + 3); };
+    for (let p = 10; p < 100; p += 10) { tag(String(p), (w * p) / 100 + 3, 2); tag(String(p), 2, (h * p) / 100 + 3); }
+    return toBlob(cv, 0.9);
+  }
+  async function makeCrop(bmp, box) {
+    const w0 = iw(bmp), h0 = ih(bmp);
+    let x0 = 0, y0 = 0, x1 = w0, y1 = h0;
+    if (box) {
+      x0 = (box[0] / 100) * w0; y0 = (box[1] / 100) * h0; x1 = (box[2] / 100) * w0; y1 = (box[3] / 100) * h0;
+      const pad = Math.max(0.02 * Math.max(w0, h0), 0.1 * Math.max(x1 - x0, y1 - y0));
+      x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(w0, x1 + pad); y1 = Math.min(h0, y1 + pad);
+    }
+    const cw = Math.max(1, x1 - x0), ch = Math.max(1, y1 - y0);
+    const s = Math.min(4, Math.sqrt(1.15e6 / (cw * ch)));
+    const ow = Math.max(1, Math.round(cw * s)), oh = Math.max(1, Math.round(ch * s));
+    const cv = document.createElement('canvas'); cv.width = ow; cv.height = oh;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, x0, y0, cw, ch, 0, 0, ow, oh);
+    return toBlob(cv, 0.92);
+  }
+  function drawPreview() {
+    const bmp = AI.bmp; const cv = $('#preview');
+    if (!bmp) { cv.hidden = true; return; }
+    cv.hidden = false;
+    const cssW = Math.max(200, cv.parentElement.clientWidth - 36);
+    const w0 = iw(bmp), h0 = ih(bmp);
+    const cssH = Math.round((cssW * h0) / w0);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    cv.style.aspectRatio = `${w0} / ${h0}`;
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(bmp, 0, 0, cssW, cssH);
+    ctx.font = '600 13px sans-serif'; ctx.textBaseline = 'top';
+    for (const v of AI.view) {
+      if (!v.box) continue;
+      const [x0, y0, x1, y1] = v.box;
+      const X = (cssW * x0) / 100, Y = (cssH * y0) / 100, Wd = (cssW * (x1 - x0)) / 100, Ht = (cssH * (y1 - y0)) / 100;
+      const col = v.state === 'done' ? '#41d1b9' : v.state === 'err' ? '#ffb020' : '#ffffff';
+      ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.setLineDash(v.state === 'busy' || v.state === 'wait' ? [6, 4] : []);
+      ctx.strokeRect(X, Y, Wd, Ht); ctx.setLineDash([]);
+      const t = `${v.seat}号 ${v.name}`; const m = ctx.measureText(t).width;
+      const ty = Y > 20 ? Y - 20 : Y + 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(X, ty, m + 10, 18);
+      ctx.fillStyle = col; ctx.fillText(t, X + 5, ty + 2);
+    }
+  }
+  window.addEventListener('resize', () => { if (AI.bmp) drawPreview(); });
+
+  const PROG = new Map();
+  function prog(id, what, state, detail) {
+    PROG.set(id, { what, state, detail });
+    const box = $('#progress'); box.replaceChildren();
+    const word = { wait: '等待', busy: '进行中', done: '完成', err: '没成功', skip: '跳过' };
+    for (const [, v] of PROG) {
+      box.append(el('li', {}, el('span', { class: `state ${v.state === 'skip' ? '' : v.state}`, text: word[v.state] || v.state }),
+        el('span', { class: 'what', text: v.what }), v.detail ? el('span', { class: 'detail', text: v.detail }) : null));
+    }
+    const viewItem = AI.view.find((x) => x.pid === id);
+    if (viewItem) { viewItem.state = state; drawPreview(); }
+  }
+
+  function chipListForPrompt() {
+    return S.chips.map((c) => `- ${c.hint}: worth ${c.value}`).join('\n');
+  }
+  function locatePrompt() {
+    const seats = S.players.map((p) => p.seat).join(', ');
+    return `You are helping settle a home poker game from a photo of the table.
+
+The photo shows a printed poker mat with seat numbers 1-10 around its edge. The numbers face the players, so some are upside down or sideways: "10" may read "01", "9" and "6" can look alike, "1" may be upside down. The mat may also have a crown, "TEXAS HOLD'EM" text and a dealer button; ignore those.
+
+A light grid is drawn over the photo: a line every 5%, labelled every 10% along the top and left edges. Coordinates are percent of the image width (x, from the left) and height (y, from the top).
+
+Players sit at these seats: ${seats}. Each player's chips lie on the mat near that player's seat number, usually between the number and the middle of the table. For each listed seat, give one box that encloses ALL of that player's chips (every row of overlapping chips, every stack and every single loose chip) with about 2% margin, and no chips that belong to another seat. If a seat has no chips, use null for its box.
+
+Reply with only JSON, no other text:
+{"seats":[{"seat":5,"box":[x0,y0,x1,y1],"summary":"黄一排、紫一排、黑一排、蓝3枚"}],"unassigned":""}
+"summary" is a short Simplified Chinese description of that seat's piles. "unassigned" describes chips that are not near any listed seat, in Simplified Chinese (empty string if none).`;
+  }
+  function countPrompt(p, whole) {
+    const colors = [...S.chips.map((c) => c.hint), S.loanHint || 'red', 'other'].join(', ');
+    return `You are counting poker chips to settle a home game. Money depends on the count, so be careful.
+
+The image is ${whole ? 'a close-up photo' : 'an enlarged crop of a table photo'} showing the chips of ONE player (seat ${p.seat}).
+
+Chip colours in this set (the denomination is printed on each chip):
+${chipListForPrompt()}
+- ${S.loanHint || 'red'}: loan marker (each one means the player borrowed ${S.loanUnit} chips). Count these too.
+Lighting changes how colours look: the same purple can look lavender or dark violet, and black can look brown. Use the printed number when you can see it.
+
+How the chips lie: mostly in overlapping rows ("fans"). In a fan one chip is fully visible at one end and every other chip shows only a crescent. Count a fan by its visible OUTER EDGES: each chip adds exactly one outer-edge arc with the full chip radius, plus the fully visible end chip. These are NOT extra chips: the printed inner ring (a smaller circle inside each chip), printed text such as "1000", "500", "100", "10" or "GLORPLAY", rim stripes, glare, and the shadow line under a chip. Two edges only a few pixels apart can still be two chips. Loose single chips and small stacks count too. Ignore chips cut off at the image border unless they belong to this player's rows.
+
+Work pile by pile. For each pile report its colour, count and confidence:
+- "high": every chip edge is clearly separable
+- "medium": one or two edges are unclear (could be off by 1)
+- "low": the chips overlap too tightly to separate; estimate from the length of the row and the typical spacing, and say so in the note
+
+Reply with only JSON, no other text:
+{"piles":[{"color":"yellow","count":11,"confidence":"high","note":"一排，两枚几乎重叠"}],"other":""}
+"color" must be one of: ${colors}. "note" is Simplified Chinese, at most 15 characters. Describe anything you could not classify in "other", in Simplified Chinese.`;
+  }
+
+  function parseLocate(j) {
+    const arr = Array.isArray(j && j.seats) ? j.seats : Array.isArray(j) ? j : [];
+    const map = new Map();
+    for (const s of arr) {
+      const seat = parseInt(s && s.seat, 10);
+      if (!seat) continue;
+      let b = Array.isArray(s.box) ? s.box.map(Number) : null;
+      if (b && b.length === 4 && b.every(Number.isFinite)) {
+        if (b.every((v) => v <= 1.0001)) b = b.map((v) => v * 100);
+        let [x0, y0, x1, y1] = b;
+        if (x1 < x0) [x0, x1] = [x1, x0];
+        if (y1 < y0) [y0, y1] = [y1, y0];
+        x0 = clamp(x0, 0, 100); x1 = clamp(x1, 0, 100); y0 = clamp(y0, 0, 100); y1 = clamp(y1, 0, 100);
+        b = x1 - x0 >= 0.5 && y1 - y0 >= 0.5 ? [x0, y0, x1, y1] : null;
+      } else b = null;
+      if (!map.has(seat)) map.set(seat, { box: b, summary: String((s && s.summary) || '').slice(0, 60) });
+    }
+    return { map, unassigned: String((j && j.unassigned) || '').slice(0, 120) };
+  }
+  function normColor(s) {
+    const t = String(s || '').toLowerCase().trim();
+    if (!t || t === 'other' || t === '其他') return null;
+    const loan = String(S.loanHint || 'red').toLowerCase();
+    if (t === loan || /\bred\b|红|loan/.test(t)) return 'red';
+    for (const c of S.chips) if (t === c.key || t === String(c.hint).toLowerCase() || t === c.label) return c.key;
+    const syn = { yellow: /yellow|gold|黄/, purple: /purple|violet|lavender|lilac|紫/, black: /black|brown|gr[ae]y|黑/, blue: /blue|cyan|蓝/ };
+    for (const c of S.chips) { const r = syn[c.key]; if (r && r.test(t)) return c.key; }
+    for (const c of S.chips) { if (c.hint && t.includes(String(c.hint).toLowerCase())) return c.key; if (c.label && t.includes(c.label)) return c.key; }
+    return null;
+  }
+  const RANK = { high: 0, medium: 1, low: 2 };
+  const normConf = (c) => { const t = String(c || '').toLowerCase(); return t.startsWith('l') ? 'low' : t.startsWith('m') ? 'medium' : 'high'; };
+  function applyCount(pid, j, source) {
+    const piles = Array.isArray(j && j.piles) ? j.piles : [];
+    const counts = {}; const notes = {}; const other = [];
+    for (const k of allKeys()) counts[k] = 0;
+    for (const pl of piles) {
+      const n = Math.max(0, Math.round(Number(pl && pl.count) || 0));
+      const key = normColor(pl && pl.color);
+      if (!key) { if (n) other.push(`${(pl && pl.color) || '未知'}×${n}`); continue; }
+      counts[key] += n;
+      const conf = normConf(pl && pl.confidence);
+      const prev = notes[key];
+      notes[key] = {
+        conf: prev && RANK[prev.conf] > RANK[conf] ? prev.conf : conf,
+        note: [prev && prev.note, String((pl && pl.note) || '').slice(0, 20)].filter(Boolean).join('；').slice(0, 40),
+      };
+    }
+    G.counts[pid] = counts;
+    (G.notes ||= {})[pid] = notes;
+    const extra = [other.length ? '没归类：' + other.join('、') : '', j && j.other ? String(j.other).slice(0, 60) : ''].filter(Boolean);
+    (G.seatNote ||= {})[pid] = [source, ...extra].join(' · ');
+  }
+  function summaryOf(pid) {
+    const parts = [];
+    for (const c of S.chips) { const n = cnt(pid, c.key); if (n) parts.push(`${c.label}${n}`); }
+    const r = cnt(pid, 'red'); if (r) parts.push(`红${r}`);
+    return parts.join(' ') || '没有筹码';
+  }
+  async function pool(tasks, n) {
+    let i = 0;
+    const worker = async () => { while (i < tasks.length) { const k = i++; await tasks[k](); } };
+    await Promise.all(Array.from({ length: Math.min(n, tasks.length) }, worker));
+  }
+  function setBusy(on) {
+    AI.busy = on;
+    $('#btn-stop').hidden = !on;
+    setPhotoEnabled(!on && AI.ready);
+    $('#btn-retry').hidden = on || !AI.file || !AI.ready;
+  }
+  function stopAll(code) {
+    if (FATAL.has(code)) { AI.ready = false; setPhotoEnabled(false); setAiNote(ERR[code], true); }
+  }
+
+  async function runTable(file) {
+    if (!AI.fn || AI.busy) return;
+    AI.file = file;
+    const ctl = new AbortController(); AI.ctl = ctl;
+    setBusy(true); PROG.clear(); AI.view = [];
+    try {
+      AI.bmp = await loadBitmap(file);
+    } catch (e) {
+      setBusy(false); setAiNote('这张照片打不开，换一张试试。', true); return;
+    }
+    drawPreview();
+    prog('locate', '找每个人的筹码在哪', 'busy', '');
+    let loc;
+    try {
+      const ov = await makeOverview(AI.bmp);
+      loc = parseLocate(await AI.fn.json(locatePrompt(), { images: [ov], modelTier: 'default', signal: ctl.signal }));
+    } catch (e) {
+      prog('locate', '找每个人的筹码在哪', 'err', errText(e));
+      stopAll(e && e.code); setBusy(false); return;
+    }
+    const found = S.players.filter((p) => loc.map.get(p.seat) && loc.map.get(p.seat).box).length;
+    prog('locate', '找每个人的筹码在哪', 'done', `找到 ${found} 个人的筹码${loc.unassigned ? '；另外：' + loc.unassigned : ''}`);
+    G = { label: `${today()} 拍照识别`, example: false, counts: {}, notes: {}, seatNote: {} };
+    AI.view = S.players.map((p) => ({ pid: p.id, seat: p.seat, name: p.name, box: (loc.map.get(p.seat) || {}).box || null, state: 'wait' }));
+    for (const p of S.players) {
+      const hit = loc.map.get(p.seat);
+      if (hit && hit.summary) G.seatNote[p.id] = hit.summary;
+      prog(p.id, `${p.seat}号 ${p.name}`, hit && hit.box ? 'wait' : 'skip', hit && hit.box ? '' : '照片里没找到这个人的筹码');
+    }
+    renderCards(); save();
+    let fatal = null;
+    const tasks = S.players.filter((p) => (loc.map.get(p.seat) || {}).box).map((p) => async () => {
+      if (ctl.signal.aborted || fatal) return;
+      const box = loc.map.get(p.seat).box;
+      prog(p.id, `${p.seat}号 ${p.name}`, 'busy', '放大了单独数');
+      try {
+        const crop = await makeCrop(AI.bmp, box);
+        const j = await AI.fn.json(countPrompt(p, false), { images: [crop], modelTier: 'complex', signal: ctl.signal });
+        applyCount(p.id, j, '全桌照片识别');
+        prog(p.id, `${p.seat}号 ${p.name}`, 'done', summaryOf(p.id));
+        renderCards(); save();
+      } catch (e) {
+        prog(p.id, `${p.seat}号 ${p.name}`, 'err', errText(e));
+        if (FATAL.has(e && e.code)) { fatal = e.code; stopAll(e.code); }
+      }
+    });
+    await pool(tasks, 2);
+    setBusy(false);
+  }
+
+  async function runRetake(file, p) {
+    if (!AI.fn || AI.busy) return;
+    const ctl = new AbortController(); AI.ctl = ctl;
+    setBusy(true);
+    prog(p.id, `${p.seat}号 ${p.name}（近拍）`, 'busy', '数这张近拍照片');
+    try {
+      const bmp = await loadBitmap(file);
+      const crop = await makeCrop(bmp, null);
+      const j = await AI.fn.json(countPrompt(p, true), { images: [crop], modelTier: 'complex', signal: ctl.signal });
+      applyCount(p.id, j, '近拍识别');
+      if (G.example) { G.example = false; G.label = `${today()} 拍照识别`; }
+      prog(p.id, `${p.seat}号 ${p.name}（近拍）`, 'done', summaryOf(p.id));
+      renderCards(); save();
+    } catch (e) {
+      prog(p.id, `${p.seat}号 ${p.name}（近拍）`, 'err', errText(e));
+      stopAll(e && e.code);
+    }
+    setBusy(false);
+  }
+
+  for (const id of ['in-cam', 'in-pick']) {
+    const input = document.getElementById(id);
+    input.addEventListener('change', () => { const f = input.files && input.files[0]; input.value = ''; if (f) runTable(f); });
+  }
+  $('#btn-stop').addEventListener('click', () => { if (AI.ctl) AI.ctl.abort(); });
+  $('#btn-retry').addEventListener('click', () => { if (AI.file) runTable(AI.file); });
+
+  // ---------- boot ----------
+  renderRules();
+  renderSettings();
+  renderCards();
+})();
+</script>

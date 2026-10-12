@@ -1,0 +1,12 @@
+{
+  "name": "countchips",
+  "version": "1.0.0",
+  "private": true,
+  "description": "筹码结算器：拍照数筹码、核对总账、算出每人输赢和转账",
+  "scripts": {
+    "test": "node tests/e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
